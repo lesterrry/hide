@@ -23,13 +23,28 @@ use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 //aaaa
 
 //Color formatting codes
-const RED: &str = "\x1b[31mERR: ";
-const GRN: &str = "\x1b[32mSCSS: ";
-const ORG: &str = "\x1b[33mWARN: ";
-const BLD: &str = "\x1b[1mINF: ";
-const MAG: &str = "\x1b[35m";
-const CYN: &str = "\x1b[36m";
-const RES: &str = "\x1b[0m";
+#[cfg(target_os = "macos")]
+mod colors {
+	pub const RED: &str = "\x1b[31mERR: ";
+	pub const GRN: &str = "\x1b[32mSCSS: ";
+	pub const ORG: &str = "\x1b[33mWARN: ";
+	pub const BLD: &str = "\x1b[1mINF: ";
+	pub const MAG: &str = "\x1b[35m";
+	pub const CYN: &str = "\x1b[36m";
+	pub const RES: &str = "\x1b[0m";
+}
+
+#[cfg(target_os = "windows")]
+mod colors {
+	pub const RED: &str = "";
+	pub const GRN: &str = "";
+	pub const ORG: &str = "";
+	pub const BLD: &str = "";
+	pub const MAG: &str = "";
+	pub const CYN: &str = "";
+	pub const RES: &str = "";
+}
+use crate::colors::*;
 
 const CHECKSEED: &'static str = "ZENIT345";
 
@@ -154,7 +169,7 @@ fn main() {
 //**********************************
 //********* Main lifecycle *********
 //**********************************
-	let user = env!("USER");
+	let user = env!("USERNAME");
 	loop {
 		match &(readline_editor.readline(&format!("{}{}@Hide> {}", MAG, user, RES)).expect("Stdin error")) as &str{
 			"kill" | "exit" => exit(),
@@ -429,7 +444,7 @@ fn string_from_file(path: &PathBuf) -> Result<String, io::Error>{
 //Functions of preparing data
 fn prepare_data(data: Vec<u8>, formal_name: &str) -> EncryptedFile {
 	EncryptedFile{
-		since: get_now(), user: env!("USER").to_string(), formal_name: formal_name.to_string(), data: data
+		since: get_now(), user: env!("USERNAME").to_string(), formal_name: formal_name.to_string(), data: data
 	}
 }
 fn prepare_config(data: Vec<u8>, dir: String) -> ConfigFile {
@@ -463,8 +478,9 @@ fn pause() {
 	let mut stdout = io::stdout();
 	write!(stdout, "Press any key to continue...").unwrap();
 	stdout.flush().unwrap();
-	//MARK: UNCOMMENT IF COMPILING FOR WINDOWS
-	//stdin.read(&mut [0]);
+	if cfg!(windows) {
+		stdin.read(&mut [0]);
+	}
 	loop{
 		match stdin.read(&mut [0u8]){
 			Ok(_res) => break,
