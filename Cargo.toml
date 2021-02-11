@@ -1,0 +1,17 @@
+[package]
+name = "hide"
+version = "0.1.1"
+authors = ["Aydar <lesterrry@rambler.ru>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rustyline = "7.0.0"
+rpassword = "0.0.4"
+directories = "3.0.1"
+serde = "0.9"
+serde_json = "0.9"
+serde_derive = "0.9"
+rust-crypto = "0.2.36"
+progress_bar = "0.1.3"
