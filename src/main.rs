@@ -2,29 +2,23 @@ use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::{Write, Read};
-//use std::ffi::OsStr;
 use std::time::SystemTime;
 use std::path::{PathBuf};
-extern crate directories;
 use directories::{ProjectDirs};
-extern crate rpassword;
 use rpassword::read_password;
-extern crate serde;
-extern crate serde_json;
 #[macro_use] extern crate serde_derive;
-extern crate rustyline;
 use rustyline::Editor;
-
-//help me
-extern crate crypto;
-
 use crypto::{ symmetriccipher, buffer, aes, blockmodes };
 use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
-//aaaa
+use progress_bar::progress_bar::ProgressBar;
+
+//"\u{1b}]31mFFFFF\u{1b}]0m" 
 
 //Color formatting codes
 #[cfg(target_os = "macos")]
-mod colors {
+mod constants {
+	pub const ENV_USER: &str = env!("USER");
+
 	pub const RED: &str = "\x1b[31mERR: ";
 	pub const GRN: &str = "\x1b[32mSCSS: ";
 	pub const ORG: &str = "\x1b[33mWARN: ";
@@ -32,10 +26,13 @@ mod colors {
 	pub const MAG: &str = "\x1b[35m";
 	pub const CYN: &str = "\x1b[36m";
 	pub const RES: &str = "\x1b[0m";
+	pub const CTB: &str = "\x1b[100H";
 }
 
 #[cfg(target_os = "windows")]
-mod colors {
+mod constants {
+	pub const ENV_USER: &str = env!("USERNAME");
+
 	pub const RED: &str = "";
 	pub const GRN: &str = "";
 	pub const ORG: &str = "";
@@ -43,8 +40,9 @@ mod colors {
 	pub const MAG: &str = "";
 	pub const CYN: &str = "";
 	pub const RES: &str = "";
+	pub const CTB: &str = "\x1b[100H";
 }
-use crate::colors::*;
+use crate::constants::*;
 
 const CHECKSEED: &'static str = "ZENIT345";
 
@@ -67,6 +65,34 @@ struct Lifecycle {
 	default_dir: String,
 	key: Vec<u8>,
 	iv: Vec<u8>
+}
+#[derive(Debug)]
+struct OperationOutcome {
+	total: usize,
+	ok: usize,
+	skip: usize,
+	fail: usize
+}
+#[derive(Debug)]
+enum OperationStepResult {
+	Ok,
+	Skip,
+	Fail
+}
+#[derive(Debug)]
+struct DirectoryCondition{
+	total: usize,
+	encrypted: usize,
+	decrypted: usize,
+	other: usize,
+	condition: DirectoryConditionLabel
+}
+#[derive(Debug)]
+enum DirectoryConditionLabel{
+	FullyEncrypted,
+	FullyDecrypted,
+	Empty,
+	Other
 }
 
 fn main() {
@@ -100,7 +126,7 @@ fn main() {
 			Ok(result) => decrypted = result,
 			Err(error) => panic(&error.to_string())
 		}
-		match qdecrypt(&decrypted.data, &key, &iv){
+		match decrypt_data(&decrypted.data, &key, &iv){
 			Ok(result) => {
 				if String::from_utf8_lossy(&result) == CHECKSEED {
 					println!("{}Access granted{}", GRN, RES);
@@ -139,7 +165,7 @@ fn main() {
 				}
 				if i == 2 { key = fill_byte_arr(password.as_bytes(), 0, 32) } else { iv = fill_byte_arr(password.as_bytes(), 0, 16) }
 			}
-			match qencrypt(CHECKSEED.as_bytes(), &key, &iv){
+			match encrypt_data(CHECKSEED.as_bytes(), &key, &iv){
 				Ok(result) => { encrypted_data = result; break }
 				Err(error) => println!("{}{:?}{}", RED, error, RES)
 			}
@@ -169,46 +195,102 @@ fn main() {
 //**********************************
 //********* Main lifecycle *********
 //**********************************
-	let user = env!("USERNAME");
+	let user = ENV_USER;
 	loop {
-		match &(readline_editor.readline(&format!("{}{}@Hide> {}", MAG, user, RES)).expect("Stdin error")) as &str{
+		match &(readline_editor.readline(&format!("{}{}@Hide {} > {}", MAG, user, &lifecycle.dir.split("/").collect::<Vec<&str>>().last().unwrap_or(&"~"), RES)).expect("Stdin error")) as &str{
 			"kill" | "exit" => exit(),
 			"ld" | "ls" => {
 				println!("{}:", lifecycle.dir);
-				walk_through_dir(&lifecycle.dir, &|i: usize, path: &fs::DirEntry| { 
-						println!("{}.{} {}", i + 1, 
-							if path.file_type().unwrap().is_dir() { 
-								format!("{} [FLDR]{}", CYN, RES) 
-							} else if path.file_type().unwrap().is_symlink() { 
-								format!("{} [SYML]{}", CYN, RES) 
-							} else if path.path().extension().is_none() { 
-								format!("{} [NOEX]{}", CYN, RES) 
-							} else if path.file_name().into_string().unwrap_or(String::new()).contains(".crpt") {
-								format!("{} [CRPT]{}", CYN, RES)
-							} else { 
-								String::new()
-							}, 
-							path.file_name().into_string().unwrap());
-						true
-					}
-				);
+				let mut dirst = DirectoryCondition{total: 0, encrypted: 0, decrypted: 0, other: 0, condition: DirectoryConditionLabel::Other};
+				match walk_through_dir(false, &lifecycle.dir, &mut|i: usize, path: &fs::DirEntry| { 
+							println!("{}.{} {}", i + 1, 
+								if path.file_type().unwrap().is_dir() { 
+									dirst.other += 1;
+									format!("{} [FLDR]{}", CYN, RES) 
+								} else if path.file_type().unwrap().is_symlink() {
+									dirst.other += 1;
+									format!("{} [SYML]{}", CYN, RES)
+								} else if path.path().extension().is_none() { 
+									dirst.other += 1;
+									format!("{} [NOEX]{}", CYN, RES)
+								} else if path.file_name().into_string().unwrap_or(String::new()).contains(".crpt") {
+									dirst.encrypted += 1;
+									format!("{} [CRPT]{}", CYN, RES)
+								} else { 
+									dirst.decrypted += 1;
+									String::new()
+								}, 
+								path.file_name().into_string().unwrap());
+							dirst.total += 1;
+							OperationStepResult::Ok
+						}
+					) {
+						Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
+						Ok(_) => {
+							dirst.define_condition();
+							match dirst.condition {
+								DirectoryConditionLabel::Empty => println!("{} is empty", lifecycle.dir),
+								DirectoryConditionLabel::FullyEncrypted => println!("{} is fully encrypted", lifecycle.dir),
+								DirectoryConditionLabel::FullyDecrypted => println!("{} is fully decrypted", lifecycle.dir),
+								DirectoryConditionLabel::Other => { 
+									println!("{}: {} encrypted, {} decrypted, {} other with total of {} files", lifecycle.dir, dirst.encrypted, dirst.decrypted, dirst.other, dirst.total)
+								}
+							}
+						}
+				}
 			},
-			"cd" => { lifecycle.dir = lifecycle.default_dir.clone(); println!("{}Changed to default{}", GRN, RES) },
+			"cd" => { lifecycle.dir = lifecycle.default_dir.clone(); println!("{}Directory set to default{}", GRN, RES) },
 			cd if cd.contains("cd") => {
 				let dir = cd.replace("cd ","");
 				match fs::read_dir(&dir){
 					Ok(_) => {
 						lifecycle.dir = dir;
-						println!("{}Changed{}", GRN, RES);
+						println!("{}Directory changed{}", GRN, RES);
 					},
 					Err(error) => println!("{}Unreachable dir: {}{}", RED, error, RES)
 				}
 			},
-			"en" => {
-					walk_through_dir(&lifecycle.dir, &|i: usize, path: &fs::DirEntry| {
-						encrypt(path, &lifecycle.dir, i)
+			"st" => {
+				let mut dirst = DirectoryCondition{total: 0, encrypted: 0, decrypted: 0, other: 0, condition: DirectoryConditionLabel::Other};
+				match walk_through_dir(false, &lifecycle.dir, &mut|_i: usize, path: &fs::DirEntry, | {
+								if path.file_type().unwrap().is_dir() { 
+									dirst.other += 1;
+								} else if path.file_type().unwrap().is_symlink() {
+									dirst.other += 1;
+								} else if path.path().extension().is_none() { 
+									dirst.other += 1;
+								} else if path.file_name().into_string().unwrap_or(String::new()).contains(".crpt") {
+									dirst.encrypted += 1;
+								} else { 
+									dirst.decrypted += 1;
+								}
+								dirst.total += 1;
+								OperationStepResult::Ok
+							}
+						) {
+						Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
+						Ok(_) => {
+							dirst.define_condition();
+							match dirst.condition {
+								DirectoryConditionLabel::Empty => println!("{} is empty", lifecycle.dir),
+								DirectoryConditionLabel::FullyEncrypted => println!("{} is fully encrypted", lifecycle.dir),
+								DirectoryConditionLabel::FullyDecrypted => println!("{} is fully decrypted", lifecycle.dir),
+								DirectoryConditionLabel::Other => { 
+									println!("{}: {} encrypted, {} decrypted, {} other with total of {} files", lifecycle.dir, dirst.encrypted, dirst.decrypted, dirst.other, dirst.total)
+								}
+							}
+						}
 					}
-				);
+			}
+			"en" => {
+					println!("Encrypting {}...", &lifecycle.dir);
+					match walk_through_dir(true, &lifecycle.dir, &mut|i: usize, path: &fs::DirEntry| {
+								encrypt(path, &lifecycle.dir, i)
+							}
+						) {
+						Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
+						Ok(result) => println!("\nOperation totals: {} encrypted, {} skipped, {} errors, {} total", result.ok, result.skip, result.fail, result.total)
+					}
 			},
 			en if en.contains("en") => {
 				let mode = en.replace("en", "");
@@ -218,10 +300,14 @@ fn main() {
 				}
 			},
 			"de" => {
-				walk_through_dir(&lifecycle.dir, &|_i: usize, path: &fs::DirEntry| {
-					decrypt(path)
-					}
-				);
+				println!("Decrypting {}...", &lifecycle.dir);
+				match walk_through_dir(true, &lifecycle.dir, &mut|_i: usize, path: &fs::DirEntry| {
+							decrypt(path)
+						}
+					){
+					Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
+					Ok(result) => println!("\nOperation totals: {} decrypted, {} skipped, {} errors", result.ok, result.skip, result.fail)
+				}
 			},
 			"revoke" => {
 				println!("{}All settings and password data will be lost. This action can't be undone.{}", ORG, RES);
@@ -239,8 +325,8 @@ fn main() {
 	}
 }
 
-//***********************************************************
-fn qencrypt(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, symmetriccipher::SymmetricCipherError> {
+//Functions of data handling
+fn encrypt_data(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, symmetriccipher::SymmetricCipherError> {
 	let mut encryptor = aes::cbc_encryptor(
 			aes::KeySize::KeySize256,
 			key,
@@ -263,7 +349,7 @@ fn qencrypt(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, symmetricciph
 	Ok(final_result)
 }
 
-fn qdecrypt(encrypted_data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, symmetriccipher::SymmetricCipherError> {
+fn decrypt_data(encrypted_data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, symmetriccipher::SymmetricCipherError> {
 	let mut decryptor = aes::cbc_decryptor(
 			aes::KeySize::KeySize256,
 			key,
@@ -290,28 +376,47 @@ fn qdecrypt(encrypted_data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, sym
 
 	Ok(final_result)
 }
-//***********************************************************
 
-
+//Function of defining directory condition
+impl DirectoryCondition{
+	fn define_condition(&mut self){
+		if self.total == self.encrypted + self.other && self.encrypted > 0 {
+			self.condition = DirectoryConditionLabel::FullyEncrypted
+		} else if self.total == self.decrypted + self.other && self.decrypted > 0 {
+			self.condition = DirectoryConditionLabel::FullyDecrypted
+		} else if self.total == 0 {
+			self.condition = DirectoryConditionLabel::Empty
+		} else {
+			self.condition = DirectoryConditionLabel::Other
+		}
+	}
+}
 //Function of smart exiting
 fn exit() -> ! {
 	std::process::exit(-1)
 }
 
 //Function of walking through dir
-fn walk_through_dir(dir: &str, foreach: &dyn Fn(usize, &fs::DirEntry) -> bool) -> usize{
+fn walk_through_dir(progress_bar: bool, dir: &str, foreach: &mut dyn FnMut(usize, &fs::DirEntry) -> OperationStepResult) -> Result<OperationOutcome, io::Error> {
 	match fs::read_dir(dir){
 		Ok(result) => {
 			let mut map: Vec<_> = result.map(|r| r.unwrap()).collect();
 			map.sort_by_key(|dir| dir.file_name());
-			let mut a: usize = 0;
+			let mut bar = ProgressBar::new(map.len());
+			let mut oks = 0;
+			let mut skips = 0;
+			let mut fails = 0;
 			for (i, path) in map.iter().enumerate() {
-				foreach(i, path);
-				a = i;
+				match foreach(i, path){
+					OperationStepResult::Ok => oks += 1,
+					OperationStepResult::Skip => skips += 1,
+					OperationStepResult::Fail => fails += 1,
+				}
+				if progress_bar { bar.inc() }
 			}
-			return a
+			return Ok(OperationOutcome{total: map.len(), ok: oks, skip: skips, fail: fails})
 		},
-		Err(_) => { println!("{}Empty/unreachable dir{}", RED, RES); return 0 }
+		Err(error) => return Err(error)
 	}
 }
 
@@ -336,79 +441,74 @@ fn get_now() -> u64{
 }
 
 //Function of handling decryption
-fn decrypt(path: &fs::DirEntry) -> bool{
-let name = path.file_name().into_string().unwrap_or(String::new());
+fn decrypt(path: &fs::DirEntry) -> OperationStepResult{
+	let name = path.file_name().into_string().unwrap_or(String::new());
 	if !name.contains(".crpt"){
-			println!("{} was skipped ", name);
-			return false
+			return OperationStepResult::Skip
 	} else {
-		print(&format!("{} being decrypted... ", name));
 		let json: EncryptedFile;
 		let filecontent: String;
 		match string_from_file(&path.path()){
 			Ok(result) => filecontent = result,
-			Err(_) => { println!("{}Couldn't read{}", RED, RES); return false }
+			Err(_) => { println!("\n{}Couldn't read {}{}", RED, name, RES); return OperationStepResult::Fail }
 		}
 		match serde_json::from_str::<EncryptedFile>(&filecontent){
 			Ok(result) => json = result,
-			Err(error) => { println!("{}{}{}", RED, error, RES); return false }
+			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 
 		let key: [u8; 32] = [0; 32];
 		let iv: [u8; 16] = [0; 16];
 		let de: Vec<u8>;
-		match qdecrypt(&json.data, &key, &iv){
+		match decrypt_data(&json.data, &key, &iv){
 			Ok(result) => (de = result),
-			Err(_) => { return false }
+			Err(_) => { println!("\n{}Couldn't decrypt {}{}", RED, name, RES); return OperationStepResult::Fail }
 		}
 		match fs::write(path.path(), de){
 			Ok(_) => (),
-			Err(error) => { println!("{}{}{}", RED, error, RES); return false }
+			Err(error) => { println!("\n{}{} ({}) {}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		fs::rename(path.path(), json.formal_name).unwrap();
-		println!("OK");
-		true
+		OperationStepResult::Ok
 	}
 }
 
 //Function of handling encryption
-fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize) -> bool {
+fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize) -> OperationStepResult {
 	let name = path.file_name().into_string().unwrap_or(String::new());
 	if name.contains(".crpt") || path.file_type().unwrap().is_dir() || path.file_type().unwrap().is_symlink() || path.path().extension().is_none(){
-		println!("{} was skipped ", name);
-		return false
+		return OperationStepResult::Skip
 	} else {
-		print(&format!("{} being encrypted... ", name));
+		//print(&format!("{} being encrypted... ", name));
 		let fpath = path.path();
 		let mut f: File;
 		match File::open(fpath.clone()){
 			Ok(result) => f = result,
-			Err(error) => { println!("{}{}{}", RED, error, RES); return false }
+			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		let mut buffer = Vec::new();
 		match f.read_to_end(&mut buffer){
 			Ok(_) => (),
-			Err(error) => { println!("{}{}{}", RED, error, RES); return false }
+			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		let key: [u8; 32] = [0; 32];
 		let iv: [u8; 16] = [0; 16];
 
-		let encrypted_data = qencrypt(&buffer, &key, &iv).ok().unwrap();
+		let encrypted_data = encrypt_data(&buffer, &key, &iv).ok().unwrap();
 		let to_write = prepare_data(encrypted_data, fpath.to_str().unwrap());
 		let json: String;
 		match serde_json::to_string(&to_write){
 			Ok(result) => json = result,
-			Err(error) => { println!("{}{}{}", RED, error, RES); return false }
+			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		write_to_file(&fpath, json);
-		fs::rename(fpath, format!("{}/{}.crpt", in_dir, index)).unwrap();
-	 	println!("OK");
-	 	true
+		fs::rename(fpath, format!("{}/{}.crpt", in_dir, index + 1)).unwrap();
+		OperationStepResult::Ok
 	}
 }
 //Function of panicking in style
 fn panic(error: &str) -> !{
-	println!("{}{}{}", RED, error, RES);
+	println!("{}[FATAL] {}{}", RED, error, RES);
 	pause();
 	std::process::exit(-1)
 }
@@ -444,7 +544,7 @@ fn string_from_file(path: &PathBuf) -> Result<String, io::Error>{
 //Functions of preparing data
 fn prepare_data(data: Vec<u8>, formal_name: &str) -> EncryptedFile {
 	EncryptedFile{
-		since: get_now(), user: env!("USERNAME").to_string(), formal_name: formal_name.to_string(), data: data
+		since: get_now(), user: ENV_USER.to_string(), formal_name: formal_name.to_string(), data: data
 	}
 }
 fn prepare_config(data: Vec<u8>, dir: String) -> ConfigFile {
@@ -472,6 +572,7 @@ fn print(string: &str){
 	print!("{}", string);
 	io::stdout().flush().expect("Couldn't flush");
 }
+
 //Function of waiting for key before quitting
 fn pause() {
 	let mut stdin = io::stdin();
@@ -479,7 +580,7 @@ fn pause() {
 	write!(stdout, "Press any key to continue...").unwrap();
 	stdout.flush().unwrap();
 	if cfg!(windows) {
-		stdin.read(&mut [0]);
+		stdin.read(&mut [0]).unwrap();
 	}
 	loop{
 		match stdin.read(&mut [0u8]){
