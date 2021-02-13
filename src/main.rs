@@ -99,7 +99,7 @@ enum DirectoryConditionLabel{
 }
 #[derive(Debug, Clone)]
 struct DirectoryEnDeOptions{
-	intervals: Option<Vec<Vec<u16>>>,
+	intervals: Option<Vec<usize>>,
 	small: bool,
 	medium: bool,
 	large: bool,
@@ -240,7 +240,7 @@ fn main() {
 									format!("{} [NOEX]{}", CYN, RES)
 								} else if name.contains(".crpt") {
 									dirst.encrypted += 1;
-									format!("{} [CRPT]{}", CYN, RES)
+									format!("{} [CRPT]{} ({})", CYN, RES, name_from_json(path.path()))
 								} else if name == "hide" || name == "hide.exe" {
 									dirst.other += 1;
 									format!("{} [HIDE]{}", CYN, RES)
@@ -337,12 +337,29 @@ impl DirectoryCondition{
 //*********** Functions ************
 //**********************************
 
+//Function of getting file name from json
+fn name_from_json(file: PathBuf) -> String {
+	let filecontent: String;
+	match string_from_file(&file){
+		Ok(result) => filecontent = result,
+		Err(_) => return "Unknown".to_string()
+	}
+	let json: EncryptedFile;
+	match serde_json::from_str::<EncryptedFile>(&filecontent){
+		Ok(result) => json = result,
+		Err(_) => return "Unknown".to_string()
+	}
+	return json.formal_name;
+}
+
 //Function of determining ende options
 fn get_options(args: &str) -> DirectoryEnDeOptions {
 	let mut a = DirectoryEnDeOptions::default();
 	let b = args.split(" ");
+	let mut int: Vec<usize> = vec!();
+	let mut intneed = false;
 	for i in b {
-		if i == "all" || i == "allbut" {
+		if i == "all" || i == "except" {
 			a = DirectoryEnDeOptions::default();
 		}
 		else if i == "none" || i == "only" {
@@ -406,12 +423,39 @@ fn get_options(args: &str) -> DirectoryEnDeOptions {
 		else if i == "-t" {
 			a.texts = false
 		}
-		else if i != " " {
-			println!("{}{} is an unknown argument{}", BLD, i, RES);
+		else if is_numeric(i){
+			intneed = true;
+			int.push(i.parse::<usize>().unwrap() - 1);
+		}
+		else if i.contains(".."){
+			intneed = true;
+			let c: Vec<&str> = i.split("..").collect();
+			if c.len() == 2 && is_numeric(c[0]) && is_numeric(c[1]) {
+				for i in c[0].parse::<usize>().unwrap()..=c[1].parse::<usize>().unwrap(){
+    				int.push(i - 1);
+				}
+			}
+		}
+		else if i != "" {
+			println!("{}{:?} is an unknown argument{}", BLD, i, RES);
 		}
 	}
-	if a.clone().is_non_closing() { println!("{}Provided pattern is non-closing. Consider using 'help' command.{}", BLD, RES ); }
-	a
+	if intneed{
+		a.intervals = Some(int)
+	}
+	if a.clone().is_non_closing() { println!("{}Provided pattern is excluding. Consider using 'help' command.{}", ORG, RES ); }
+	return a
+}
+
+//Function of checking whether str is a num
+fn is_numeric(str: &str) -> bool {
+	if str == "" { return false }
+    for c in str.chars() {
+        if !c.is_numeric() {
+            return false;
+        }
+    }
+    return true;
 }
 
 //Function of encrypting directory
@@ -423,7 +467,7 @@ fn encrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
 			}
 		) {
 		Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
-		Ok(result) => println!("\nOperation totals: {} encrypted, {} skipped, {} errors, {} total. Finished in {}", result.ok, result.skip, result.fail, result.total, SystemTime::now().duration_since(start).unwrap().as_secs())
+		Ok(result) => println!("\nOperation totals: {} encrypted, {} skipped, {} errors, {} total. Finished in {}s", result.ok, result.skip, result.fail, result.total, SystemTime::now().duration_since(start).unwrap().as_secs())
 	}
 }
 
@@ -431,8 +475,8 @@ fn encrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
 fn decrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
 	println!("Decrypting {}...", dir);
 	let start = SystemTime::now();
-	match walk_through_dir(true, dir, &mut|_i: usize, path: &fs::DirEntry| {
-				decrypt(path, options.to_owned())
+	match walk_through_dir(true, dir, &mut|i: usize, path: &fs::DirEntry| {
+				decrypt(path, options.to_owned(), i)
 			}
 		){
 		Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
@@ -584,7 +628,7 @@ fn get_now() -> u64{
 }
 
 //Function of handling decryption
-fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>) -> OperationStepResult {
+fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: usize) -> OperationStepResult {
 	let name = path.file_name().into_string().unwrap_or(String::new());
 	let filecontent: String;
 	let len: u64;
@@ -601,7 +645,7 @@ fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>) -> Operat
 			Ok(result) => json = result,
 			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
-		if options.is_some() && need_to_filter(options.unwrap(), &json.formal_name, len) {
+		if options.is_some() && need_to_filter(options.unwrap(), &json.formal_name, len, index) {
 			return OperationStepResult::Skip
 		}
 		let key: [u8; 32] = [0; 32];
@@ -635,7 +679,7 @@ fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize, options: Option<D
 		}
 		let len = f.metadata().unwrap().len();
 		if options.is_some(){
-			if need_to_filter(options.unwrap(), &name, len){
+			if need_to_filter(options.unwrap(), &name, len, index){
 				return OperationStepResult::Skip
 			}
 		}
@@ -661,18 +705,21 @@ fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize, options: Option<D
 }
 
 //Function of deciding whether to skip a file
-fn need_to_filter(options: DirectoryEnDeOptions, name: &str, len: u64) -> bool {
+fn need_to_filter(options: DirectoryEnDeOptions, name: &str, len: u64, index: usize) -> bool {
 	let ext = extension(&name).unwrap_or(String::from("")).to_owned();
-		if 
-		(!options.small && len < 3000000) || 
-		(!options.medium && len < 10000000 && len >= 3000000) || 
-		(!options.large && len >= 10000000) || 
-		(extension(&name).is_some() && (
-			(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
-			(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
-			(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
-			(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
-		))
+	if options.intervals.is_some() && options.intervals.clone().unwrap().contains(&index) {
+		return false;
+	}
+		if
+			(!options.small && len < 3000000) || 
+			(!options.medium && len < 10000000 && len >= 3000000) || 
+			(!options.large && len >= 10000000) || 
+			(extension(&name).is_some() && (
+				(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
+				(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
+				(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
+				(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
+			))
 	{	
 		true
 	} else {
@@ -726,7 +773,7 @@ fn string_from_file(path: &PathBuf) -> Result<String, io::Error>{
 fn string_and_meta_from_file(path: &PathBuf) -> Result<(String, u64), io::Error>{
 	let mut file: File;
 	let mut filecontent: String = String::from("");
-	let mut len: u64;
+	let len: u64;
 	match File::open(path){
 		Ok(result) => file = result,
 		Err(error) => return Err(error)
