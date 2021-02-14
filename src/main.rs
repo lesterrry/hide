@@ -6,13 +6,15 @@ use std::time::SystemTime;
 use std::path::{PathBuf};
 use directories::{ProjectDirs};
 use rpassword::read_password;
-#[macro_use] extern crate serde_derive;
+use serde_derive::{Deserialize, Serialize};
 use rustyline::Editor;
 use crypto::{ symmetriccipher, buffer, aes, blockmodes };
 use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 use progress_bar::progress_bar::ProgressBar;
 
-//"\u{1b}]31mFFFFF\u{1b}]0m" 
+//"\u{1b}]31mFFFFF\u{1b}]0m"
+
+const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nen – encrypt current directory\nen f <file> – encrypt exact file\nen <arguments> – encrypt with smart filters\nde – decrypt current directory\nde f <file> – decrypt exact file\nde <arguments> – decrypt with smart filters\n    Arguments of commands de/en:\n    all/only – reset filter queue\n    none – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (and equal) in selected directory\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: one should build queue from the least important filter, to the most. The last filter will always apply the last.\nFor example, queue 'only m l p -l' will at first reset filter (only), thus passing every file, then selecting medium sized files (m), large files (l) and pictures (p), and deselecting large files at the end (-l). '-l' filter stays after the 'l', thus disabling it.\nAnother example: queue 'p a v sizes -b all' makes no sense, as 'all' filter as the end will disable all previous, and every file will be passed.\nSo, if we remove it, the queue will look like this: 'p a v sizes -b', selecting all pictures (p), audios (a) and videos (v), and all sizes of files except big ones (sizes -b). We can make it even better, by passing 'types -t sizes -b', selecting all file types except text ones, and all sizes except big ones.";
 
 //Constants, conditionally compiled for differrent OS
 #[cfg(target_os = "macos")]
@@ -58,7 +60,6 @@ struct ConfigFile {
 struct EncryptedFile {
 	since: u64,
 	user: String,
-	formal_name: String,
 	data: Vec<u8>
 }
 #[derive(Debug)]
@@ -119,6 +120,9 @@ impl DirectoryEnDeOptions {
 	fn is_non_closing(self) -> bool{
 		self.intervals == None && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
 	}
+	fn is_int_only(self) -> bool{
+		self.intervals.is_some() && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
+	}
 }
 
 fn main() {
@@ -143,10 +147,10 @@ fn main() {
 		let o = request_password(Some("Password #2: >"));
 		let key = fill_byte_arr(o.as_bytes(), 0, 32);
 
-		let filecontent: String = string_from_file(&configfile).unwrap();
+		let filecontent = fs::read(&configfile).unwrap();
 		let decrypted: ConfigFile; 
 
-		match serde_json::from_str::<ConfigFile>(&filecontent){
+		match serde_cbor::from_slice::<ConfigFile>(&filecontent){
 			Ok(result) => decrypted = result,
 			Err(error) => panic(&error.to_string())
 		}
@@ -201,12 +205,8 @@ fn main() {
 			match fs::read_dir(&dir){
 				Ok(_) => {
 					lifecycle = Lifecycle{default_dir: dir.clone(), dir: dir.clone(), iv: iv.to_vec(), key: key.to_vec()};
-					let json: String;
-					match serde_json::to_string(&prepare_config(encrypted_data, dir)){
-						Ok(result) => json = result,
-						Err(error) => panic(&error.to_string())
-					}
-					write_to_file(&configfile, json);
+					let filecontent = serde_cbor::to_vec(&prepare_config(encrypted_data, dir)).unwrap();
+					fs::write(&configfile, filecontent).unwrap();
 					println!("{}Configuration saved{}", GRN, RES);
 					println!("{}Consider using [help] command{}", BLD, RES);
 					break;
@@ -240,7 +240,7 @@ fn main() {
 									format!("{} [NOEX]{}", CYN, RES)
 								} else if name.contains(".crpt") {
 									dirst.encrypted += 1;
-									format!("{} [CRPT]{} ({})", CYN, RES, name_from_json(path.path()))
+									format!("{} [CRPT]{}", CYN, RES)
 								} else if name == "hide" || name == "hide.exe" {
 									dirst.other += 1;
 									format!("{} [HIDE]{}", CYN, RES)
@@ -280,12 +280,20 @@ fn main() {
 			"en" => {
 				encrypt_dir(&lifecycle.dir, None)
 			},
+			en if en.contains("en f") => {
+				let arg = en.replace("en f","").replace(" ", "");
+				encrypt_file(PathBuf::from(arg));
+			},
 			en if en.contains("en") => {
 				let args = en.replace("en","");
 				encrypt_dir(&lifecycle.dir, Some(get_options(&args)))
 			},
 			"de" => {
 				decrypt_dir(&lifecycle.dir, None)
+			},
+			de if de.contains("de f") => {
+				let arg = de.replace("de f","").replace(" ", "");
+				decrypt_file(PathBuf::from(arg));
 			},
 			de if de.contains("de") => {
 				let args = de.replace("de","");
@@ -301,7 +309,10 @@ fn main() {
 				else{
 					println!("Cancelled");
 				}
-			}
+			},
+			"help" => {
+				println!("Hide v{}, created by Lesterrry in 2020.\n{}", env!("CARGO_PKG_VERSION"), HELPINFO);
+			},
 			_ => println!("Unknown command")
 		}
 	}
@@ -337,29 +348,14 @@ impl DirectoryCondition{
 //*********** Functions ************
 //**********************************
 
-//Function of getting file name from json
-fn name_from_json(file: PathBuf) -> String {
-	let filecontent: String;
-	match string_from_file(&file){
-		Ok(result) => filecontent = result,
-		Err(_) => return "Unknown".to_string()
-	}
-	let json: EncryptedFile;
-	match serde_json::from_str::<EncryptedFile>(&filecontent){
-		Ok(result) => json = result,
-		Err(_) => return "Unknown".to_string()
-	}
-	return json.formal_name;
-}
-
 //Function of determining ende options
 fn get_options(args: &str) -> DirectoryEnDeOptions {
-	let mut a = DirectoryEnDeOptions::default();
+	let mut a = DirectoryEnDeOptions::non_closing();
 	let b = args.split(" ");
 	let mut int: Vec<usize> = vec!();
 	let mut intneed = false;
 	for i in b {
-		if i == "all" || i == "except" {
+		if i == "all" {
 			a = DirectoryEnDeOptions::default();
 		}
 		else if i == "none" || i == "only" {
@@ -431,9 +427,17 @@ fn get_options(args: &str) -> DirectoryEnDeOptions {
 			intneed = true;
 			let c: Vec<&str> = i.split("..").collect();
 			if c.len() == 2 && is_numeric(c[0]) && is_numeric(c[1]) {
-				for i in c[0].parse::<usize>().unwrap()..=c[1].parse::<usize>().unwrap(){
-    				int.push(i - 1);
+				let d = c[0].parse::<usize>().unwrap();
+				let e = c[1].parse::<usize>().unwrap();
+				if e > d{
+					for i in d..=e {
+	    				int.push(i - 1);
+					}
+				} else {
+					println!("{}Excluding interval{}", BLD, RES);
 				}
+			} else {
+				println!("{}Wrong interval syntax{}", BLD, RES);
 			}
 		}
 		else if i != "" {
@@ -463,7 +467,7 @@ fn encrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
 	println!("Encrypting {}...", dir);
 	let start = SystemTime::now();
 	match walk_through_dir(true, &dir, &mut|i: usize, path: &fs::DirEntry| {
-				encrypt(path, &String::from(dir), i, options.to_owned())
+				encrypt(path, i, options.to_owned())
 			}
 		) {
 		Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
@@ -627,31 +631,86 @@ fn get_now() -> u64{
 	a
 }
 
+//Function of handling decryption for a single file
+fn decrypt_file(path: PathBuf) -> OperationStepResult {
+	println!("Decrypting {}...", path.to_str().unwrap());
+	let filecontent: Vec<u8>;
+	match fs::read(&path){
+		Ok(result) => filecontent = result,
+		Err(_) => { println!("{}Couldn't read{}", RED, RES); return OperationStepResult::Fail }
+	}
+	let ser: EncryptedFile;
+	match serde_cbor::from_slice::<EncryptedFile>(&filecontent) {
+		Ok(result) => ser = result,
+		Err(error) => { println!("{}{}{}", RED, error, RES); return OperationStepResult::Fail }
+	}
+	let key: [u8; 32] = [0; 32];
+	let iv: [u8; 16] = [0; 16];
+	let de: Vec<u8>;
+	match decrypt_data(&ser.data, &key, &iv){
+		Ok(result) => (de = result),
+		Err(_) => { println!("{}Couldn't decrypt{}", RED, RES); return OperationStepResult::Fail }
+	}
+	match fs::write(path.clone(), de){
+		Ok(_) => (),
+		Err(error) => { println!("{}{}{}", RED, error, RES); return OperationStepResult::Fail }
+	}
+	fs::rename(&path, &path.to_str().unwrap().replace(".crpt", "")).unwrap();
+	OperationStepResult::Ok
+}
+
+//Function of handling encryption for a single file
+fn encrypt_file(path: PathBuf) -> OperationStepResult {
+	println!("Encrypting {}...", path.to_str().unwrap());
+	let mut f: File;
+	match File::open(path.clone()){
+		Ok(result) => f = result,
+		Err(error) => { println!("{}{}{}", RED, error, RES); return OperationStepResult::Fail }
+	}
+	let mut buffer = Vec::new();
+	match f.read_to_end(&mut buffer){
+		Ok(_) => (),
+		Err(error) => { println!("{}{}{}", RED, error, RES); return OperationStepResult::Fail }
+	}
+	let key: [u8; 32] = [0; 32];
+	let iv: [u8; 16] = [0; 16];
+
+	let encrypted_data = encrypt_data(&buffer, &key, &iv).ok().unwrap();
+	let to_write = prepare_data(encrypted_data);
+	let encoded: Vec<u8> = serde_cbor::to_vec(&to_write).unwrap();
+	fs::write(&path, encoded).unwrap();
+	fs::rename(path.clone(), path.to_str().unwrap().to_owned() + ".crpt").unwrap();
+	OperationStepResult::Ok
+}
+
 //Function of handling decryption
 fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: usize) -> OperationStepResult {
 	let name = path.file_name().into_string().unwrap_or(String::new());
-	let filecontent: String;
+	let filecontent: Vec<u8>;
 	let len: u64;
 	if !name.contains(".crpt") || path.path().extension().is_none() 
 	{
 		return OperationStepResult::Skip
 	} else {
-		match string_and_meta_from_file(&path.path()){
+		if options.is_some() && options.clone().unwrap().is_int_only() && need_to_skip(options.clone().unwrap(), None, 0, index){
+			return OperationStepResult::Skip
+		}
+		match bytes_and_meta_from_file(&path.path()){
 			Ok(result) => { filecontent = result.0; len = result.1 },
 			Err(_) => { println!("\n{}Couldn't read {}{}", RED, name, RES); return OperationStepResult::Fail }
 		}
-		let json: EncryptedFile;
-		match serde_json::from_str::<EncryptedFile>(&filecontent){
-			Ok(result) => json = result,
+		let ser: EncryptedFile;
+		match serde_cbor::from_slice::<EncryptedFile>(&filecontent) {
+			Ok(result) => ser = result,
 			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
-		if options.is_some() && need_to_filter(options.unwrap(), &json.formal_name, len, index) {
+		if options.is_some() && need_to_skip(options.unwrap(), Some(&name), len, index) {
 			return OperationStepResult::Skip
 		}
 		let key: [u8; 32] = [0; 32];
 		let iv: [u8; 16] = [0; 16];
 		let de: Vec<u8>;
-		match decrypt_data(&json.data, &key, &iv){
+		match decrypt_data(&ser.data, &key, &iv){
 			Ok(result) => (de = result),
 			Err(_) => { println!("\n{}Couldn't decrypt {}{}", RED, name, RES); return OperationStepResult::Fail }
 		}
@@ -659,13 +718,13 @@ fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: us
 			Ok(_) => (),
 			Err(error) => { println!("\n{}{} ({}) {}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
-		fs::rename(path.path(), json.formal_name).unwrap();
+		fs::rename(path.path(), path.path().to_str().unwrap().replace(".crpt", "")).unwrap();
 		OperationStepResult::Ok
 	}
 }
 
 //Function of handling encryption
-fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize, options: Option<DirectoryEnDeOptions>) -> OperationStepResult {
+fn encrypt(path: &fs::DirEntry, index: usize, options: Option<DirectoryEnDeOptions>) -> OperationStepResult {
 	let name = path.file_name().into_string().unwrap_or(String::new());
 	if name.contains(".crpt") || name == "hide" || name == "hide.exe" || path.file_type().unwrap().is_dir() || path.file_type().unwrap().is_symlink() || path.path().extension().is_none(){
 		return OperationStepResult::Skip
@@ -679,7 +738,7 @@ fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize, options: Option<D
 		}
 		let len = f.metadata().unwrap().len();
 		if options.is_some(){
-			if need_to_filter(options.unwrap(), &name, len, index){
+			if need_to_skip(options.unwrap(), Some(&name), len, index){
 				return OperationStepResult::Skip
 			}
 		}
@@ -692,21 +751,17 @@ fn encrypt(path: &fs::DirEntry, in_dir: &String, index: usize, options: Option<D
 		let iv: [u8; 16] = [0; 16];
 
 		let encrypted_data = encrypt_data(&buffer, &key, &iv).ok().unwrap();
-		let to_write = prepare_data(encrypted_data, fpath.to_str().unwrap());
-		let json: String;
-		match serde_json::to_string(&to_write){
-			Ok(result) => json = result,
-			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
-		}
-		write_to_file(&fpath, json);
-		fs::rename(fpath, format!("{}/{}.crpt", in_dir, index + 1)).unwrap();
+		let to_write = prepare_data(encrypted_data);
+		let encoded: Vec<u8> = serde_cbor::to_vec(&to_write).unwrap();
+		fs::write(&fpath, encoded).unwrap();
+		fs::rename(fpath.clone(), fpath.to_str().unwrap().to_owned() + ".crpt").unwrap();
 		OperationStepResult::Ok
 	}
 }
 
 //Function of deciding whether to skip a file
-fn need_to_filter(options: DirectoryEnDeOptions, name: &str, len: u64, index: usize) -> bool {
-	let ext = extension(&name).unwrap_or(String::from("")).to_owned();
+fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64, index: usize) -> bool {
+	let ext = if name.is_some() { extension(&name.unwrap()).unwrap_or(String::from("")).to_owned() } else { "".to_string() };
 	if options.intervals.is_some() && options.intervals.clone().unwrap().contains(&index) {
 		return false;
 	}
@@ -714,7 +769,7 @@ fn need_to_filter(options: DirectoryEnDeOptions, name: &str, len: u64, index: us
 			(!options.small && len < 3000000) || 
 			(!options.medium && len < 10000000 && len >= 3000000) || 
 			(!options.large && len >= 10000000) || 
-			(extension(&name).is_some() && (
+			(name.is_some() && (
 				(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
 				(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
 				(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
@@ -729,10 +784,7 @@ fn need_to_filter(options: DirectoryEnDeOptions, name: &str, len: u64, index: us
 
 //Function of getting file extension in a normal fucking way
 fn extension(filename: &str) -> Option<String>{
-	match filename.split(".").collect::<Vec<&str>>().last(){
-		Some(result) => return Some(result.to_string()),
-		None => return None
-	}
+	return Some(filename.split(".").collect::<Vec<&str>>()[1].to_string())
 }
 
 //Function of panicking in style
@@ -742,44 +794,18 @@ fn panic(error: &str) -> !{
 	std::process::exit(-1)
 }
 
-//Function of writing String to file
-fn write_to_file(path: &PathBuf, data: String){
-	let mut file: File;
-	match File::create(path){
-		Ok(result) => file = result, 
-		Err(error) => panic(&error.to_string())
-	}
-	match write!(file, "{}", data){
-		Ok(_) => (),
-		Err(error) => panic(&error.to_string())
-	}
-}
-
-//Functions of reading from file
-fn string_from_file(path: &PathBuf) -> Result<String, io::Error>{
-	let mut file: File;
-	let mut filecontent: String = String::from("");
-	match File::open(path){
-		Ok(result) => file = result,
-		Err(error) => return Err(error)
-	}
-	match file.read_to_string(&mut filecontent) {
-		Ok(_) => (),
-		Err(error) => return Err(error)
-	}
-	Ok(filecontent)
-}
-
-fn string_and_meta_from_file(path: &PathBuf) -> Result<(String, u64), io::Error>{
-	let mut file: File;
-	let mut filecontent: String = String::from("");
+//Function of reading file
+fn bytes_and_meta_from_file(path: &PathBuf) -> Result<(Vec<u8>, u64), io::Error>{
+	let file: File;
 	let len: u64;
+	let filecontent: Vec<u8>;
+
 	match File::open(path){
 		Ok(result) => file = result,
 		Err(error) => return Err(error)
 	}
-	match file.read_to_string(&mut filecontent) {
-		Ok(_) => (),
+	match fs::read(path) {
+		Ok(result) => filecontent = result,
 		Err(error) => return Err(error)
 	}
 	match file.metadata() {
@@ -790,9 +816,9 @@ fn string_and_meta_from_file(path: &PathBuf) -> Result<(String, u64), io::Error>
 }
 
 //Functions of preparing data
-fn prepare_data(data: Vec<u8>, formal_name: &str) -> EncryptedFile {
+fn prepare_data(data: Vec<u8>) -> EncryptedFile {
 	EncryptedFile{
-		since: get_now(), user: ENV_USER.to_string(), formal_name: formal_name.to_string(), data: data
+		since: get_now(), user: ENV_USER.to_string(), data: data
 	}
 }
 fn prepare_config(data: Vec<u8>, dir: String) -> ConfigFile {
