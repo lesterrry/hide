@@ -12,15 +12,12 @@ use crypto::{ symmetriccipher, buffer, aes, blockmodes };
 use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 use progress_bar::progress_bar::ProgressBar;
 
-//"\u{1b}]31mFFFFF\u{1b}]0m"
-
-const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nen – encrypt current directory\nen f <file> – encrypt exact file\nen <arguments> – encrypt with smart filters\nde – decrypt current directory\nde f <file> – decrypt exact file\nde <arguments> – decrypt with smart filters\n    Arguments of commands de/en:\n    all/only – reset filter queue\n    none – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (and equal) in selected directory\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: one should build queue from the least important filter, to the most. The last filter will always apply the last.\nFor example, queue 'only m l p -l' will at first reset filter (only), thus passing every file, then selecting medium sized files (m), large files (l) and pictures (p), and deselecting large files at the end (-l). '-l' filter stays after the 'l', thus disabling it.\nAnother example: queue 'p a v sizes -b all' makes no sense, as 'all' filter as the end will disable all previous, and every file will be passed.\nSo, if we remove it, the queue will look like this: 'p a v sizes -b', selecting all pictures (p), audios (a) and videos (v), and all sizes of files except big ones (sizes -b). We can make it even better, by passing 'types -t sizes -b', selecting all file types except text ones, and all sizes except big ones.";
+const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nen – encrypt current directory\nen f <file> – encrypt exact file\nen <arguments> – encrypt with smart filters\nde – decrypt current directory\nde f <file> – decrypt exact file\nde <arguments> – decrypt with smart filters\n    Arguments of commands de/en:\n    all/only – reset filter queue\n    none – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: one should build queue from the least important filter, to the most. The last filter will always apply the last.\nFor example, queue 'only m l p -l' will at first reset filter (only), thus passing every file, then selecting medium sized files (m), large files (l) and pictures (p), and deselecting large files at the end (-l). '-l' filter stays after the 'l', thus disabling it.\nAnother example: queue 'p a v sizes -b all' makes no sense, as 'all' filter as the end will disable all previous, and every file will be passed.\nSo, if we remove it, the queue will look like this: 'p a v sizes -b', selecting all pictures (p), audios (a) and videos (v), and all sizes of files except big ones (sizes -b). We can make it even better, by passing 'types -t sizes -b', selecting all file types except text ones, and all sizes except big ones.";
 
 //Constants, conditionally compiled for differrent OS
 #[cfg(target_os = "macos")]
 mod constants {
 	pub const ENV_USER: &str = env!("USER");
-
 	pub const RED: &str = "\x1b[31mERR: ";
 	pub const GRN: &str = "\x1b[32mSCSS: ";
 	pub const ORG: &str = "\x1b[33mWARN: ";
@@ -33,7 +30,6 @@ mod constants {
 #[cfg(target_os = "windows")]
 mod constants {
 	pub const ENV_USER: &str = env!("USERNAME");
-
 	pub const RED: &str = "ERR: ";
 	pub const GRN: &str = "SCSS: ";
 	pub const ORG: &str = "WARN: ";
@@ -119,9 +115,6 @@ impl DirectoryEnDeOptions {
 	}
 	fn is_non_closing(self) -> bool{
 		self.intervals == None && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
-	}
-	fn is_int_only(self) -> bool{
-		self.intervals.is_some() && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
 	}
 }
 
@@ -335,8 +328,8 @@ impl DirectoryCondition{
 	fn to_str(self) -> String{
 		match self.condition {
 			DirectoryConditionLabel::Empty => return format!("{} is empty", self.path),
-			DirectoryConditionLabel::FullyEncrypted => return format!("{} is fully encrypted", self.path),
-			DirectoryConditionLabel::FullyDecrypted => return format!("{} is fully decrypted", self.path),
+			DirectoryConditionLabel::FullyEncrypted => return format!("{} is fully encrypted with {} files inside", self.path, self.total),
+			DirectoryConditionLabel::FullyDecrypted => return format!("{} is fully decrypted with {} files inside", self.path, self.total),
 			DirectoryConditionLabel::Other => { 
 				return format!("{}: {} encrypted, {} decrypted, {} other with total of {} files", self.path, self.encrypted, self.decrypted, self.other, self.total)
 			}
@@ -587,6 +580,7 @@ fn analyze_dir(dir: &str) -> Result<DirectoryCondition, io::Error>{
 		Err(error) => Err(error)
 	}
 }
+
 //Function of walking through dir
 fn walk_through_dir(progress_bar: bool, dir: &str, foreach: &mut dyn FnMut(usize, &fs::DirEntry) -> OperationStepResult) -> Result<OperationOutcome, io::Error> {
 	match fs::read_dir(dir){
@@ -692,20 +686,17 @@ fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: us
 	{
 		return OperationStepResult::Skip
 	} else {
-		if options.is_some() && options.clone().unwrap().is_int_only() && need_to_skip(options.clone().unwrap(), None, 0, index){
-			return OperationStepResult::Skip
-		}
 		match bytes_and_meta_from_file(&path.path()){
 			Ok(result) => { filecontent = result.0; len = result.1 },
 			Err(_) => { println!("\n{}Couldn't read {}{}", RED, name, RES); return OperationStepResult::Fail }
+		}
+		if options.is_some() && need_to_skip(options.unwrap(), Some(&name), len, index) {
+			return OperationStepResult::Skip
 		}
 		let ser: EncryptedFile;
 		match serde_cbor::from_slice::<EncryptedFile>(&filecontent) {
 			Ok(result) => ser = result,
 			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
-		}
-		if options.is_some() && need_to_skip(options.unwrap(), Some(&name), len, index) {
-			return OperationStepResult::Skip
 		}
 		let key: [u8; 32] = [0; 32];
 		let iv: [u8; 16] = [0; 16];
@@ -762,19 +753,19 @@ fn encrypt(path: &fs::DirEntry, index: usize, options: Option<DirectoryEnDeOptio
 //Function of deciding whether to skip a file
 fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64, index: usize) -> bool {
 	let ext = if name.is_some() { extension(&name.unwrap()).unwrap_or(String::from("")).to_owned() } else { "".to_string() };
-	if options.intervals.is_some() && options.intervals.clone().unwrap().contains(&index) {
-		return false;
-	}
 		if
-			(!options.small && len < 3000000) || 
-			(!options.medium && len < 10000000 && len >= 3000000) || 
-			(!options.large && len >= 10000000) || 
-			(name.is_some() && (
-				(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
-				(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
-				(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
-				(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
-			))
+			(!options.small  && len <  3000000)  || 
+			(!options.medium && len <  10000000 && len >= 3000000) || 
+			(!options.large  && len >= 10000000) || 
+			(name.is_some() && 
+				(
+					(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
+					(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
+					(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
+					(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
+				)
+			) ||
+			(options.intervals.is_some() && !options.intervals.clone().unwrap().contains(&index))
 	{	
 		true
 	} else {
@@ -784,7 +775,7 @@ fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64, ind
 
 //Function of getting file extension in a normal fucking way
 fn extension(filename: &str) -> Option<String>{
-	return Some(filename.split(".").collect::<Vec<&str>>()[1].to_string())
+	return Some(filename.split(".").collect::<Vec<&str>>()[1].to_string().to_lowercase())
 }
 
 //Function of panicking in style
