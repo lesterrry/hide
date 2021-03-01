@@ -10,6 +10,7 @@ use serde_derive::{Deserialize, Serialize};
 use rustyline::Editor;
 use crypto::{ symmetriccipher, buffer, aes, blockmodes };
 use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
+#[cfg(target_os = "macos")] //I don't want any progress bars on Windows
 use progress_bar::progress_bar::ProgressBar;
 
 const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nen – encrypt current directory\nen f <file> – encrypt exact file\nen <arguments> – encrypt with smart filters\nde – decrypt current directory\nde f <file> – decrypt exact file\nde <arguments> – decrypt with smart filters\n    Arguments of commands de/en:\n    all/only – reset filter queue\n    none – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: one should build queue from the least important filter, to the most. The last filter will always apply the last.\nFor example, queue 'only m l p -l' will at first reset filter (only), thus passing every file, then selecting medium sized files (m), large files (l) and pictures (p), and deselecting large files at the end (-l). '-l' filter stays after the 'l', thus disabling it.\nAnother example: queue 'p a v sizes -b all' makes no sense, as 'all' filter as the end will disable all previous, and every file will be passed.\nSo, if we remove it, the queue will look like this: 'p a v sizes -b', selecting all pictures (p), audios (a) and videos (v), and all sizes of files except big ones (sizes -b). We can make it even better, by passing 'types -t sizes -b', selecting all file types except text ones, and all sizes except big ones.";
@@ -18,10 +19,10 @@ const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEn
 #[cfg(target_os = "macos")]
 mod constants {
 	pub const ENV_USER: &str = env!("USER");
-	pub const RED: &str = "\x1b[31mERR: ";
-	pub const GRN: &str = "\x1b[32mSCSS: ";
-	pub const ORG: &str = "\x1b[33mWARN: ";
-	pub const BLD: &str = "\x1b[1mINF: ";
+	pub const RED: &str = "\x1b[31m";
+	pub const GRN: &str = "\x1b[32m";
+	pub const ORG: &str = "\x1b[33m";
+	pub const BLD: &str = "\x1b[1m";
 	pub const MAG: &str = "\x1b[35m";
 	pub const CYN: &str = "\x1b[36m";
 	pub const RES: &str = "\x1b[0m";
@@ -30,10 +31,10 @@ mod constants {
 #[cfg(target_os = "windows")]
 mod constants {
 	pub const ENV_USER: &str = env!("USERNAME");
-	pub const RED: &str = "ERR: ";
-	pub const GRN: &str = "SCSS: ";
+	pub const RED: &str = "ERROR: ";
+	pub const GRN: &str = "SUCCESS: ";
 	pub const ORG: &str = "WARN: ";
-	pub const BLD: &str = "INF: ";
+	pub const BLD: &str = "INFO: ";
 	pub const MAG: &str = "";
 	pub const CYN: &str = "";
 	pub const RES: &str = "";
@@ -214,7 +215,7 @@ fn main() {
 //**********************************
 	let user = ENV_USER;
 	loop {
-		match &(readline_editor.readline(&format!("{}{}@Hide /{} > {}", MAG, user, &lifecycle.dir.split("/").collect::<Vec<&str>>().last().unwrap_or(&"~"), RES)).expect("Stdin error")) as &str{
+		match &(readline_editor.readline(&format!("{}{}@Hide /{} > {}", MAG, user, if !cfg!(windows){&lifecycle.dir.split("/").collect::<Vec<&str>>().last().unwrap_or(&"~")} else {""}, RES)).expect("Stdin error")) as &str{
 			"kill" | "exit" => exit(lifecycle),
 			"ld" | "ls" => {
 				println!("{}:", &lifecycle.dir);
@@ -424,7 +425,11 @@ fn get_options(args: &str) -> DirectoryEnDeOptions {
 				let e = c[1].parse::<usize>().unwrap();
 				if e > d{
 					for i in d..=e {
-	    				int.push(i - 1);
+						if i < 1{
+							println!("{}Number less than zero{}", BLD, RES);
+						} else {
+	    					int.push(i - 1);
+	    				}
 					}
 				} else {
 					println!("{}Excluding interval{}", BLD, RES);
@@ -581,7 +586,8 @@ fn analyze_dir(dir: &str) -> Result<DirectoryCondition, io::Error>{
 	}
 }
 
-//Function of walking through dir
+//Functions of walking through dir, conditionally compiled for different OS
+#[cfg(target_os = "macos")]
 fn walk_through_dir(progress_bar: bool, dir: &str, foreach: &mut dyn FnMut(usize, &fs::DirEntry) -> OperationStepResult) -> Result<OperationOutcome, io::Error> {
 	match fs::read_dir(dir){
 		Ok(result) => {
@@ -598,6 +604,28 @@ fn walk_through_dir(progress_bar: bool, dir: &str, foreach: &mut dyn FnMut(usize
 					OperationStepResult::Fail => fails += 1,
 				}
 				if progress_bar { bar.inc() }
+			}
+			return Ok(OperationOutcome{total: map.len(), ok: oks, skip: skips, fail: fails})
+		},
+		Err(error) => return Err(error)
+	}
+}
+
+#[cfg(target_os = "windows")]
+fn walk_through_dir(_progress_bar: bool, dir: &str, foreach: &mut dyn FnMut(usize, &fs::DirEntry) -> OperationStepResult) -> Result<OperationOutcome, io::Error> {
+	match fs::read_dir(dir){
+		Ok(result) => {
+			let mut map: Vec<_> = result.map(|r| r.unwrap()).collect();
+			map.sort_by_key(|dir| dir.file_name());
+			let mut oks = 0;
+			let mut skips = 0;
+			let mut fails = 0;
+			for (i, path) in map.iter().enumerate() {
+				match foreach(i, path){
+					OperationStepResult::Ok => oks += 1,
+					OperationStepResult::Skip => skips += 1,
+					OperationStepResult::Fail => fails += 1,
+				}
 			}
 			return Ok(OperationOutcome{total: map.len(), ok: oks, skip: skips, fail: fails})
 		},
