@@ -13,7 +13,7 @@ use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 #[cfg(target_os = "macos")] //I don't want any progress bars on Windows
 use progress_bar::progress_bar::ProgressBar;
 
-const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nen – encrypt current directory\nen f <file> – encrypt exact file\nen <arguments> – encrypt with smart filters\nde – decrypt current directory\nde f <file> – decrypt exact file\nde <arguments> – decrypt with smart filters\n    Arguments of commands de/en:\n    all/only – reset filter queue\n    none – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: one should build queue from the least important filter, to the most. The last filter will always apply the last.\nFor example, queue 'only m l p -l' will at first reset filter (only), thus passing every file, then selecting medium sized files (m), large files (l) and pictures (p), and deselecting large files at the end (-l). '-l' filter stays after the 'l', thus disabling it.\nAnother example: queue 'p a v sizes -b all' makes no sense, as 'all' filter as the end will disable all previous, and every file will be passed.\nSo, if we remove it, the queue will look like this: 'p a v sizes -b', selecting all pictures (p), audios (a) and videos (v), and all sizes of files except big ones (sizes -b). We can make it even better, by passing 'types -t sizes -b', selecting all file types except text ones, and all sizes except big ones.";
+const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nenfile <file> – encrypt exact file\nen <arguments> – encrypt current dir with arguments\ndefile <file> – decrypt exact file\nde <arguments> – decrypt current dir with arguments\n    Arguments of commands de/en:\n    all – reset filter queue\n    none/only – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory\n    \'NAME\', where NAME is a file name (w/o extension)\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: file names and intervals have the biggest privelege";
 
 //Constants, conditionally compiled for differrent OS
 #[cfg(target_os = "macos")]
@@ -98,24 +98,26 @@ enum DirectoryConditionLabel{
 #[derive(Debug, Clone)]
 struct DirectoryEnDeOptions{
 	intervals: Option<Vec<usize>>,
+	filenames: Option<Vec<String>>,
 	small: bool,
 	medium: bool,
 	large: bool,
 	pics: bool,
 	videos: bool,
 	audios: bool,
-	texts: bool
+	texts: bool,
+	folders: bool
 }
 
 impl DirectoryEnDeOptions {
 	fn default() -> DirectoryEnDeOptions{
-		DirectoryEnDeOptions{intervals: None, small: true, medium: true, large: true, pics: true, videos: true, audios: true, texts: true}
+		DirectoryEnDeOptions{intervals: None, filenames: None, small: true, medium: true, large: true, pics: true, videos: true, audios: true, texts: true, folders: true}
 	}
 	fn non_closing() -> DirectoryEnDeOptions{
-		DirectoryEnDeOptions{intervals: None, small: false, medium: false, large: false, pics: false, videos: false, audios: false, texts: false}
+		DirectoryEnDeOptions{intervals: None, filenames: None, small: false, medium: false, large: false, pics: false, videos: false, audios: false, texts: false, folders: false}
 	}
 	fn is_non_closing(self) -> bool{
-		self.intervals == None && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
+		self.intervals == None && self.filenames == None && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
 	}
 }
 
@@ -215,9 +217,10 @@ fn main() {
 //**********************************
 	let user = ENV_USER;
 	loop {
-		match &(readline_editor.readline(&format!("{}{}@Hide /{} > {}", MAG, user, if !cfg!(windows){&lifecycle.dir.split("/").collect::<Vec<&str>>().last().unwrap_or(&"~")} else {""}, RES)).expect("Stdin error")) as &str{
-			"kill" | "exit" => exit(lifecycle),
-			"ld" | "ls" => {
+		let command = &(readline_editor.readline(&format!("{}{}@Hide /{} > {}", MAG, user, if !cfg!(windows){&lifecycle.dir.split("/").collect::<Vec<&str>>().last().unwrap_or(&"~")} else {""}, RES)).expect("Stdin error")) as &str;
+		match command.split(" ").collect::<Vec<&str>>().first().unwrap_or(&"") {
+			&"kill" | &"exit" => exit(lifecycle),
+			&"ld" | &"ls" => {
 				println!("{}:", &lifecycle.dir);
 				let mut dirst = DirectoryCondition{path: String::from(&lifecycle.dir), total: 0, encrypted: 0, decrypted: 0, other: 0, condition: DirectoryConditionLabel::Other};
 				match walk_through_dir(false, &lifecycle.dir, &mut|i: usize, path: &fs::DirEntry| {
@@ -254,7 +257,7 @@ fn main() {
 						}
 				}
 			},
-			"cd" => { lifecycle.dir = lifecycle.default_dir.clone(); println!("{}Directory set to default{}", GRN, RES) },
+			&"cd" => { lifecycle.dir = lifecycle.default_dir.clone(); println!("{}Directory set to default{}", GRN, RES) },
 			cd if cd.contains("cd") => {
 				let dir = cd.replace("cd ","");
 				match fs::read_dir(&dir){
@@ -265,49 +268,43 @@ fn main() {
 					Err(error) => println!("{}Unreachable dir: {}{}", RED, error, RES)
 				}
 			},
-			"st" => {
+			&"st" => {
 				match analyze_dir(&lifecycle.dir) {
 					Ok(result) => println!("{}", result.to_str()),
 					Err(_) => (),
 				}
 			},
-			"en" => {
-				encrypt_dir(&lifecycle.dir, None)
-			},
-			en if en.contains("en f") => {
-				let arg = en.replace("en f","").replace(" ", "");
-				encrypt_file(PathBuf::from(arg));
-			},
-			en if en.contains("en") => {
-				let args = en.replace("en","");
+			&"en" => {
+				let args = command.replacen("en",  "", 1);
 				encrypt_dir(&lifecycle.dir, Some(get_options(&args)))
 			},
-			"de" => {
-				decrypt_dir(&lifecycle.dir, None)
+			&"enfile" => {
+				let arg = command.replacen("enfile", "", 1).replace(" ", "");
+				encrypt_file(PathBuf::from(arg));
 			},
-			de if de.contains("de f") => {
-				let arg = de.replace("de f","").replace(" ", "");
-				decrypt_file(PathBuf::from(arg));
-			},
-			de if de.contains("de") => {
-				let args = de.replace("de","");
+			&"de" => {
+				let args = command.replacen("de", "", 1);
 				decrypt_dir(&lifecycle.dir, Some(get_options(&args)))
 			},
-			"revoke" => {
+			&"defile" => {
+				let arg = command.replacen("defile", "", 1).replace(" ", "");
+				decrypt_file(PathBuf::from(arg));
+			},
+			&"revoke" => {
 				println!("{}All settings and password data will be lost. This action can't be undone.{}", ORG, RES);
 				if readline_editor.readline("Type 'delete data' to proceed: > ").expect("Stdin error") == "delete data"{
 					fs::remove_file(configfile).expect("Couldn't delete");
 					println!("{}Configuration deleted{}", GRN, RES);
-					std::process::exit(-1)
+					std::process::exit(0)
 				}
 				else{
 					println!("Cancelled");
 				}
 			},
-			"help" => {
-				println!("Hide v{}, created by Lesterrry in 2020.\n{}", env!("CARGO_PKG_VERSION"), HELPINFO);
+			&"help" => {
+				println!("Hide v{}, created by Lesterrry in 2020-2021.\n{}", env!("CARGO_PKG_VERSION"), HELPINFO);
 			},
-			_ => println!("Unknown command")
+			a @ _ => println!("Unknown command: {}", a)
 		}
 	}
 }
@@ -347,9 +344,33 @@ fn get_options(args: &str) -> DirectoryEnDeOptions {
 	let mut a = DirectoryEnDeOptions::non_closing();
 	let b = args.split(" ");
 	let mut int: Vec<usize> = vec!();
+	let mut names: Vec<String> = vec!();
+	let mut name: String = String::from("");
 	let mut intneed = false;
+	let mut namesneed = false;
+	let mut names_fill = false;
 	for i in b {
-		if i == "all" {
+		if i.contains("'"){
+			namesneed = true;
+			if names_fill {
+				name = String::new() + &name + " " + &i.replace("'", "");
+				names.push(name.clone());
+				names_fill = false
+			} else {
+				name = String::new() + &i.replace("'", "");
+				if i.chars().last().unwrap() == '\''{
+					names.push(name.clone());
+					names_fill = false
+				}
+				else {
+					names_fill = true
+				}
+			}
+		}
+		else if names_fill {
+			name = String::new() + &name + " " + i
+		}
+		else if i == "all" {
 			a = DirectoryEnDeOptions::default();
 		}
 		else if i == "none" || i == "only" {
@@ -437,16 +458,20 @@ fn get_options(args: &str) -> DirectoryEnDeOptions {
 			} else {
 				println!("{}Wrong interval syntax{}", BLD, RES);
 			}
-		}
-		else if i != "" {
+		} else if i != "" {
 			println!("{}{:?} is an unknown argument{}", BLD, i, RES);
 		}
 	}
 	if intneed{
 		a.intervals = Some(int)
 	}
+	if namesneed{
+		a.filenames = Some(names)
+	}
 	if a.clone().is_non_closing() { println!("{}Provided pattern is excluding. Consider using 'help' command.{}", ORG, RES ); }
+	//println!("{:?}", a);
 	return a
+	//return DirectoryEnDeOptions::non_closing()
 }
 
 //Function of checking whether str is a num
@@ -482,7 +507,7 @@ fn decrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
 			}
 		){
 		Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
-		Ok(result) => println!("\nOperation totals: {} decrypted, {} skipped, {} errors. Finished in {}s", result.ok, result.skip, result.fail, SystemTime::now().duration_since(start).unwrap().as_secs())
+		Ok(result) => println!("\nOperation totals: {} decrypted, {} skipped, {} errors, {} total. Finished in {}s", result.ok, result.skip, result.fail, result.total, SystemTime::now().duration_since(start).unwrap().as_secs())
 	}
 }
 //Functions of data handling
@@ -597,7 +622,7 @@ fn walk_through_dir(progress_bar: bool, dir: &str, foreach: &mut dyn FnMut(usize
 			let mut oks = 0;
 			let mut skips = 0;
 			let mut fails = 0;
-			for (i, path) in map.iter().enumerate() {
+			for (i, path) in map.iter().enumerate() { 
 				match foreach(i, path){
 					OperationStepResult::Ok => oks += 1,
 					OperationStepResult::Skip => skips += 1,
@@ -780,21 +805,22 @@ fn encrypt(path: &fs::DirEntry, index: usize, options: Option<DirectoryEnDeOptio
 
 //Function of deciding whether to skip a file
 fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64, index: usize) -> bool {
+	if name.is_some() && options.filenames.is_some() && options.filenames.unwrap().contains(&name.unwrap().split(".").collect::<Vec<&str>>().first().unwrap().to_string()){ return false }
 	let ext = if name.is_some() { extension(&name.unwrap()).unwrap_or(String::from("")).to_owned() } else { "".to_string() };
-		if
-			(!options.small  && len <  3000000)  || 
-			(!options.medium && len <  10000000 && len >= 3000000) || 
-			(!options.large  && len >= 10000000) || 
-			(name.is_some() && 
-				(
-					(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
-					(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
-					(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
-					(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
-				)
-			) ||
-			(options.intervals.is_some() && !options.intervals.clone().unwrap().contains(&index))
-	{	
+	if
+		(!options.small  && len <  3000000)  || 
+		(!options.medium && len <  10000000 && len >= 3000000) || 
+		(!options.large  && len >= 10000000) || 
+		(name.is_some() && 
+			(
+				(!options.pics   && PIC_FORMATS.contains(&ext.as_str())) || 
+				(!options.videos && VID_FORMATS.contains(&ext.as_str())) ||
+				(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
+				(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
+			)
+		) ||
+		(options.intervals.is_some() && !options.intervals.clone().unwrap().contains(&index))
+	{
 		true
 	} else {
 		false
