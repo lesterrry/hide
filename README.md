@@ -16,28 +16,29 @@ Commands:
  - cd <dir> – change directory to the one specified
  - ld – list current directory
  - st – display propeerties of current directory
+ - exit
 
 Arguments of commands de/en:
  - all – reset filter queue
- - none/only – filter all files
+ - none/only – ignore all files (but why?)
  - as – apply to all sizes of files
- - -as – filter all sizes of files
  - at – apply to all file types
- - -at – filter all file types
+ - f – apply to all files in folders
+ - -f – ignore folders
  - s – apply to small files
- - -s – filter small files
+ - -s – ignore small files
  - m – apply to medium sized files
- - -m – filter all medium sized files
+ - -m – ignore all medium sized files
  - l – apply to large files
- - -l – filter large files
+ - -l – ignore all large files
  - p – apply to pictures
- - -p – filter pictures
+ - -p – ignore all pictures
  - v – apply to videos
- - -v – filter videos
+ - -v – ignore all videos
  - a – apply to audio files
- - -a – filter audio files
+ - -a – ignore all audio files
  - t – apply to text files
- - -t – filter text files
+ - -t – ignore all text files
  - N, where N is an index of file in selected folder – apply to N file in selected directory
  - X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory
  - 'NAME', where NAME is a file name (w/o extension)
