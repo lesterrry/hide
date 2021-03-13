@@ -20,10 +20,10 @@ Commands:
 Arguments of commands de/en:
  - all – reset filter queue
  - none/only – filter all files
- - sizes – apply to all sizes of files
- - -sizes – filter all sizes of files
- - types – apply to all file types
- - -types – filter all file types
+ - as – apply to all sizes of files
+ - -as – filter all sizes of files
+ - at – apply to all file types
+ - -at – filter all file types
  - s – apply to small files
  - -s – filter small files
  - m – apply to medium sized files
