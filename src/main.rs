@@ -13,7 +13,9 @@ use crypto::buffer::{ ReadBuffer, WriteBuffer, BufferResult };
 #[cfg(target_os = "macos")] //I don't want any progress bars on Windows
 use progress_bar::progress_bar::ProgressBar;
 
-const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nenfile <file> – encrypt exact file\nen <arguments> – encrypt current dir with arguments\ndefile <file> – decrypt exact file\nde <arguments> – decrypt current dir with arguments\n    Arguments of commands de/en:\n    all – reset filter queue\n    none/only – filter all files\n    sizes – apply to all sizes of files\n    -sizes – filter all sizes of files\n    types – apply to all file types\n    -types – filter all file types\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory\n    \'NAME\', where NAME is a file name (w/o extension)\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: file names and intervals have the biggest privelege";
+const HELPINFO: &str = "Helps you keep your data secure, private and hidden.\nEncrypts files via the AES symmetric cipher.\nSecured with two passwords.\n\nCommands:\nenfile <file> – encrypt exact file\nen <arguments> – encrypt current dir with arguments\ndefile <file> – decrypt exact file\nde <arguments> – decrypt current dir with arguments\n    Arguments of commands de/en:\n    all – reset filter queue\n    none/only – filter all files\n    as – apply to all sizes of files\n    -as – filter all sizes of files\n    at – apply to all file types\n    -at – filter all file types\n    f – apply to folders\n    -f – filter folders\n    s – apply to small files\n    -s – filter small files\n    m – apply to medium sized files\n    -m – filter all medium sized files\n    l – apply to large files\n    -l – filter large files\n    p – apply to pictures\n    -p – filter pictures\n    v – apply to videos\n    -v – filter videos\n    a – apply to audio files\n    -a – filter audio files\n    t – apply to text files\n    -t – filter text files\n    N, where N is an index of file in selected folder – apply to N file in selected directory\n    X..Y, where N is an index of file in selected directory – apply to all files from X to Y (including) in selected directory\n    \'NAME\', where NAME is a file name (w/o extension)\nrevoke – delete saved password data\nhelp – display this help\ncd – change directory to default\ncd <dir> – change directory to the one specified\nld – list current directory\nst – display propeerties of current directory\n\nNote about smart filters: file names and intervals have the biggest privelege";
+const CRPTFILEEXT: &str = ".crpt";
+const CRPTFLDREXT: &str = ".fcrpt";
 
 //Constants, conditionally compiled for differrent OS
 #[cfg(target_os = "macos")]
@@ -42,7 +44,7 @@ mod constants {
 use crate::constants::*;
 
 const CHECKSEED: &'static str = "ZENIT345";
-const PIC_FORMATS: [&str; 8] = ["png", "jpg", "jpeg", "tiff", "psd", "bmp", "raw", "gif"];
+const PIC_FORMATS: [&str; 9] = ["png", "jpg", "jpeg", "tiff", "psd", "bmp", "raw", "gif", "webp"];
 const VID_FORMATS: [&str; 9] = ["mp4", "mpeg", "mpg", "avi", "webm", "wmv", "mkv", "mov", "3gp"];
 const AUD_FORMATS: [&str; 7] = ["wav", "mp3", "aac", "midi", "flac", "wma", "ogg"];
 const TXT_FORMATS: [&str; 9] = ["doc", "docx", "pages", "txt", "rtf", "odt", "html", "pdf", "lx"];
@@ -117,7 +119,7 @@ impl DirectoryEnDeOptions {
 		DirectoryEnDeOptions{intervals: None, filenames: None, small: false, medium: false, large: false, pics: false, videos: false, audios: false, texts: false, folders: false}
 	}
 	fn is_non_closing(self) -> bool{
-		self.intervals == None && self.filenames == None && self.small == false && self.medium == false && self.large == false && self.pics == false && self.videos == false && self.audios == false && self.texts == false
+		self.intervals == None && self.filenames == None && !self.small && !self.medium && !self.large && !self.pics && !self.videos && !self.audios && !self.texts && !self.folders
 	}
 }
 
@@ -157,7 +159,7 @@ fn main() {
 					let z = decrypted.default_dir;
 					lifecycle = Lifecycle{default_dir: z.clone(), dir: z, key: key.to_vec(), iv: iv.to_vec()};
 					let a = (get_now() - decrypted.since) / 86400;
-					if a > 365{
+					if a > 180 {
 						println!("{}It's {} days since the password changed{}", ORG, a, RES)
 					}
 				} else {
@@ -195,7 +197,7 @@ fn main() {
 			}
 		}
 		
-		loop{
+		loop {
 			println!("Now provide a default encryption directory (full path like /a/b/c)");
 			let dir = readline_editor.readline("> ").expect("Stdin error");
 			match fs::read_dir(&dir){
@@ -227,15 +229,20 @@ fn main() {
 							let name = path.file_name().into_string().unwrap_or(String::new());
 							println!("{}.{} {}", i + 1, 
 								if path.file_type().unwrap().is_dir() { 
-									dirst.other += 1;
-									format!("{} [FLDR]{}", CYN, RES) 
+									if name.contains(CRPTFLDREXT){
+										dirst.encrypted += 1;
+										format!("{} [FLDR/CRPT]{}", CYN, RES)
+									} else {
+										dirst.decrypted += 1;
+										format!("{} [FLDR]{}", CYN, RES)
+									}
 								} else if path.file_type().unwrap().is_symlink() {
 									dirst.other += 1;
 									format!("{} [SYML]{}", CYN, RES)
 								} else if path.path().extension().is_none() { 
 									dirst.other += 1;
 									format!("{} [NOEX]{}", CYN, RES)
-								} else if name.contains(".crpt") {
+								} else if name.contains(CRPTFILEEXT) {
 									dirst.encrypted += 1;
 									format!("{} [CRPT]{}", CYN, RES)
 								} else if name == "hide" || name == "hide.exe" {
@@ -257,9 +264,11 @@ fn main() {
 						}
 				}
 			},
-			&"cd" => { lifecycle.dir = lifecycle.default_dir.clone(); println!("{}Directory set to default{}", GRN, RES) },
-			cd if cd.contains("cd") => {
-				let dir = cd.replace("cd ","");
+			&"cd" if command == "cd" => {
+				lifecycle.dir = lifecycle.default_dir.clone(); println!("{}Directory set to default{}", GRN, RES) 
+			},
+			&"cd" => {
+				let dir = command.replace("cd ","");
 				match fs::read_dir(&dir){
 					Ok(_) => {
 						lifecycle.dir = dir;
@@ -276,7 +285,7 @@ fn main() {
 			},
 			&"en" => {
 				let args = command.replacen("en",  "", 1);
-				encrypt_dir(&lifecycle.dir, Some(get_options(&args)))
+				let _ = encrypt_dir(true, &lifecycle.dir, Some(get_options(&args)));
 			},
 			&"enfile" => {
 				let arg = command.replacen("enfile", "", 1).replace(" ", "");
@@ -284,7 +293,7 @@ fn main() {
 			},
 			&"de" => {
 				let args = command.replacen("de", "", 1);
-				decrypt_dir(&lifecycle.dir, Some(get_options(&args)))
+				let _ = decrypt_dir(true, &lifecycle.dir, Some(get_options(&args)));
 			},
 			&"defile" => {
 				let arg = command.replacen("defile", "", 1).replace(" ", "");
@@ -376,21 +385,33 @@ fn get_options(args: &str) -> DirectoryEnDeOptions {
 		else if i == "none" || i == "only" {
 			a = DirectoryEnDeOptions::non_closing();
 		}
-		else if i == "sizes" {
+		else if i == "as" {
 			a.small = true;
 			a.medium = true;
 			a.large = true;
 		}
-		else if i == "-sizes" {
+		else if i == "-as" {
 			a.small = false;
 			a.medium = false;
 			a.large = false;
 		}
-		else if i == "types"{
+		else if i == "at"{
 			a.pics = true;
 			a.videos = true;
 			a.audios = true;
 			a.texts = true;
+		}
+		else if i == "-at"{
+			a.pics = false;
+			a.videos = false;
+			a.audios = false;
+			a.texts = false;
+		}
+		else if i == "f" {
+			a.folders = true
+		}
+		else if i == "-f" {
+			a.folders = false
 		}
 		else if i == "s" {
 			a.small = true
@@ -486,30 +507,28 @@ fn is_numeric(str: &str) -> bool {
 }
 
 //Function of encrypting directory
-fn encrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
-	println!("Encrypting {}...", dir);
-	let start = SystemTime::now();
-	match walk_through_dir(true, &dir, &mut|i: usize, path: &fs::DirEntry| {
-				encrypt(path, i, options.to_owned())
-			}
-		) {
-		Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
-		Ok(result) => println!("\nOperation totals: {} encrypted, {} skipped, {} errors, {} total. Finished in {}s", result.ok, result.skip, result.fail, result.total, SystemTime::now().duration_since(start).unwrap().as_secs())
-	}
+fn encrypt_dir(verbose: bool, dir: &str, options: Option<DirectoryEnDeOptions>) -> Result<(), io::Error> {
+	de_or_en_dir(verbose, true, dir, options)
 }
 
 //Function of decrypting directory
-fn decrypt_dir(dir: &str, options: Option<DirectoryEnDeOptions>){
-	println!("Decrypting {}...", dir);
+fn decrypt_dir(verbose: bool, dir: &str, options: Option<DirectoryEnDeOptions>) -> Result<(), io::Error> {
+	de_or_en_dir(verbose, false, dir, options)
+}
+
+//Derived function
+fn de_or_en_dir(verbose: bool, en: bool, dir: &str, options: Option<DirectoryEnDeOptions>) -> Result<(), io::Error> {
+	if verbose { println!("{} {}...", if en {"Encrypting"} else {"Decrypting"}, dir) }
 	let start = SystemTime::now();
-	match walk_through_dir(true, dir, &mut|i: usize, path: &fs::DirEntry| {
-				decrypt(path, options.to_owned(), i)
+	match walk_through_dir(verbose, dir, &mut|i: usize, path: &fs::DirEntry| {
+				if en { encrypt(path, options.to_owned(), i) } else { decrypt(path, options.to_owned(), i) }
 			}
 		){
-		Err(_) => println!("{}Empty/unreachable dir{}", RED, RES),
-		Ok(result) => println!("\nOperation totals: {} decrypted, {} skipped, {} errors, {} total. Finished in {}s", result.ok, result.skip, result.fail, result.total, SystemTime::now().duration_since(start).unwrap().as_secs())
+		Err(error) => { println!("{}Empty/unreachable dir{}", RED, RES); return Err(error) },
+		Ok(result) => { if verbose { println!("\nOperation totals: {} ok, {} skipped, {} errors, {} total. Finished in {}s", result.ok, result.skip, result.fail, result.total, SystemTime::now().duration_since(start).unwrap().as_secs()) } return Ok(()) }
 	}
 }
+
 //Functions of data handling
 fn encrypt_data(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, symmetriccipher::SymmetricCipherError> {
 	let mut encryptor = aes::cbc_encryptor(
@@ -567,16 +586,17 @@ fn exit(lifecycle: Lifecycle) -> ! {
 		match analyze_dir(&checks[i]){
 			Ok(result) => match result.condition {
 				DirectoryConditionLabel::FullyEncrypted | DirectoryConditionLabel::Empty => (),
-				_ => {
+				_ if result.decrypted > 0 => {
 					let mut readline_editor = Editor::<()>::new();
-					println!("{}{} is not fully encrypted{}", ORG, checks[i], RES);
+					println!("{}{} may not be fully encrypted{}", ORG, checks[i], RES);
 					if readline_editor.readline("Encrypt it? y/n >").expect("Stdin error") == "y"{
-						encrypt_dir(&checks[i], None)
+						let _ = encrypt_dir(true, &checks[i], Some(DirectoryEnDeOptions::default()));
 					}
 					if lifecycle.dir == lifecycle.default_dir{
 						break;
 					}
 				},
+				_ => ()
 			}
 			Err(_) => ()
 		}
@@ -589,16 +609,16 @@ fn analyze_dir(dir: &str) -> Result<DirectoryCondition, io::Error>{
 	let mut dirst = DirectoryCondition{path: dir.to_string(), total: 0, encrypted: 0, decrypted: 0, other: 0, condition: DirectoryConditionLabel::Other};
 	match walk_through_dir(false, dir, &mut|_i: usize, path: &fs::DirEntry, | {
 			let name = path.file_name().into_string().unwrap_or(String::new());
-			if path.file_type().unwrap().is_dir() { 
+			if path.file_type().unwrap().is_dir() {
+				if name.contains(CRPTFLDREXT){
+					dirst.encrypted += 1
+				} else {
+					dirst.decrypted += 1
+				}
+			} else if path.file_type().unwrap().is_symlink() || path.path().extension().is_none() || name == "hide" || name == "hide.exe" {
 				dirst.other += 1;
-			} else if path.file_type().unwrap().is_symlink() {
-				dirst.other += 1;
-			} else if path.path().extension().is_none() { 
-				dirst.other += 1;
-			} else if name.contains(".crpt") {
+			} else if name.contains(CRPTFILEEXT) {
 				dirst.encrypted += 1;
-			} else if name == "hide" || name == "hide.exe" {
-				dirst.other += 1;
 			} else { 
 				dirst.decrypted += 1;
 			}
@@ -689,7 +709,7 @@ fn decrypt_file(path: PathBuf) -> OperationStepResult {
 	let ser: EncryptedFile;
 	match serde_cbor::from_slice::<EncryptedFile>(&filecontent) {
 		Ok(result) => ser = result,
-		Err(error) => { println!("{}{}{}", RED, error, RES); return OperationStepResult::Fail }
+		Err(error) => { println!("{}cbor: {}{}", RED, error, RES); return OperationStepResult::Fail }
 	}
 	let key: [u8; 32] = [0; 32];
 	let iv: [u8; 16] = [0; 16];
@@ -700,9 +720,9 @@ fn decrypt_file(path: PathBuf) -> OperationStepResult {
 	}
 	match fs::write(path.clone(), de){
 		Ok(_) => (),
-		Err(error) => { println!("{}{}{}", RED, error, RES); return OperationStepResult::Fail }
+		Err(error) => { println!("{}write: {}{}", RED, error, RES); return OperationStepResult::Fail }
 	}
-	fs::rename(&path, &path.to_str().unwrap().replace(".crpt", "")).unwrap();
+	fs::rename(&path, &path.to_str().unwrap().replace(CRPTFILEEXT, "")).unwrap();
 	OperationStepResult::Ok
 }
 
@@ -726,7 +746,7 @@ fn encrypt_file(path: PathBuf) -> OperationStepResult {
 	let to_write = prepare_data(encrypted_data);
 	let encoded: Vec<u8> = serde_cbor::to_vec(&to_write).unwrap();
 	fs::write(&path, encoded).unwrap();
-	fs::rename(path.clone(), path.to_str().unwrap().to_owned() + ".crpt").unwrap();
+	fs::rename(path.clone(), path.to_str().unwrap().to_owned() + CRPTFILEEXT).unwrap();
 	OperationStepResult::Ok
 }
 
@@ -735,21 +755,36 @@ fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: us
 	let name = path.file_name().into_string().unwrap_or(String::new());
 	let filecontent: Vec<u8>;
 	let len: u64;
-	if !name.contains(".crpt") || path.path().extension().is_none() 
+	if (!name.contains(CRPTFILEEXT) && !name.contains(CRPTFLDREXT)) || (path.path().extension().is_none() && !path.file_type().unwrap().is_dir())
 	{
 		return OperationStepResult::Skip
 	} else {
+		if options.is_some() && options.clone().unwrap().intervals.is_some() && !options.clone().unwrap().intervals.unwrap().contains(&index) {
+			return OperationStepResult::Skip
+		}
+		if path.file_type().unwrap().is_dir() {
+			if options.is_some() && options.clone().unwrap().folders {
+				if decrypt_dir(false, path.path().to_str().unwrap(), None).is_ok() {
+					fs::rename(path.path(), path.path().to_str().unwrap().replace(CRPTFLDREXT, "")).unwrap();
+					return OperationStepResult::Ok
+				} else {
+					return OperationStepResult::Fail
+				}
+			} else {
+				return OperationStepResult::Skip
+			}
+		}
 		match bytes_and_meta_from_file(&path.path()){
 			Ok(result) => { filecontent = result.0; len = result.1 },
 			Err(_) => { println!("\n{}Couldn't read {}{}", RED, name, RES); return OperationStepResult::Fail }
 		}
-		if options.is_some() && need_to_skip(options.unwrap(), Some(&name), len, index) {
+		if options.is_some() && need_to_skip(options.unwrap(), Some(&name), len) {
 			return OperationStepResult::Skip
 		}
 		let ser: EncryptedFile;
 		match serde_cbor::from_slice::<EncryptedFile>(&filecontent) {
 			Ok(result) => ser = result,
-			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
+			Err(error) => { println!("\n{}cbor: {} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		let key: [u8; 32] = [0; 32];
 		let iv: [u8; 16] = [0; 16];
@@ -760,36 +795,48 @@ fn decrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: us
 		}
 		match fs::write(path.path(), de){
 			Ok(_) => (),
-			Err(error) => { println!("\n{}{} ({}) {}", RED, error, name, RES); return OperationStepResult::Fail }
+			Err(error) => { println!("\n{}write: {} ({}) {}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
-		fs::rename(path.path(), path.path().to_str().unwrap().replace(".crpt", "")).unwrap();
+		fs::rename(path.path(), path.path().to_str().unwrap().replace(CRPTFILEEXT, "")).unwrap();
 		OperationStepResult::Ok
 	}
 }
 
 //Function of handling encryption
-fn encrypt(path: &fs::DirEntry, index: usize, options: Option<DirectoryEnDeOptions>) -> OperationStepResult {
+fn encrypt(path: &fs::DirEntry, options: Option<DirectoryEnDeOptions>, index: usize) -> OperationStepResult {
 	let name = path.file_name().into_string().unwrap_or(String::new());
-	if name.contains(".crpt") || name == "hide" || name == "hide.exe" || path.file_type().unwrap().is_dir() || path.file_type().unwrap().is_symlink() || path.path().extension().is_none(){
+	if name.contains(CRPTFILEEXT) || name.contains(CRPTFLDREXT) || name == "hide" || name == "hide.exe" || path.file_type().unwrap().is_symlink() || (path.path().extension().is_none() && !path.file_type().unwrap().is_dir()) {
 		return OperationStepResult::Skip
 	} else {
-		//print(&format!("{} being encrypted... ", name));
 		let fpath = path.path();
+		if options.is_some() && options.clone().unwrap().intervals.is_some() && !options.clone().unwrap().intervals.unwrap().contains(&index) {
+			return OperationStepResult::Skip
+		}
+		if path.file_type().unwrap().is_dir() {
+			if options.is_some() && options.clone().unwrap().folders {
+				if encrypt_dir(false, path.path().to_str().unwrap(), None).is_ok() {
+					fs::rename(fpath.clone(), fpath.to_str().unwrap().to_owned() + CRPTFLDREXT).unwrap();
+					return OperationStepResult::Ok
+				} else {
+					return OperationStepResult::Fail
+				}
+			} else {
+				return OperationStepResult::Skip
+			}
+		}
 		let mut f: File;
 		match File::open(fpath.clone()){
 			Ok(result) => f = result,
-			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
+			Err(error) => { println!("\n{}open: {} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		let len = f.metadata().unwrap().len();
-		if options.is_some(){
-			if need_to_skip(options.unwrap(), Some(&name), len, index){
-				return OperationStepResult::Skip
-			}
+		if options.is_some() && need_to_skip(options.unwrap(), Some(&name), len){
+			return OperationStepResult::Skip
 		}
 		let mut buffer = Vec::new();
 		match f.read_to_end(&mut buffer){
 			Ok(_) => (),
-			Err(error) => { println!("\n{}{} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
+			Err(error) => { println!("\n{}read: {} ({}){}", RED, error, name, RES); return OperationStepResult::Fail }
 		}
 		let key: [u8; 32] = [0; 32];
 		let iv: [u8; 16] = [0; 16];
@@ -798,13 +845,13 @@ fn encrypt(path: &fs::DirEntry, index: usize, options: Option<DirectoryEnDeOptio
 		let to_write = prepare_data(encrypted_data);
 		let encoded: Vec<u8> = serde_cbor::to_vec(&to_write).unwrap();
 		fs::write(&fpath, encoded).unwrap();
-		fs::rename(fpath.clone(), fpath.to_str().unwrap().to_owned() + ".crpt").unwrap();
+		fs::rename(fpath.clone(), fpath.to_str().unwrap().to_owned() + CRPTFILEEXT).unwrap();
 		OperationStepResult::Ok
 	}
 }
 
 //Function of deciding whether to skip a file
-fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64, index: usize) -> bool {
+fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64) -> bool {
 	if name.is_some() && options.filenames.is_some() && options.filenames.unwrap().contains(&name.unwrap().split(".").collect::<Vec<&str>>().first().unwrap().to_string()){ return false }
 	let ext = if name.is_some() { extension(&name.unwrap()).unwrap_or(String::from("")).to_owned() } else { "".to_string() };
 	if
@@ -818,8 +865,7 @@ fn need_to_skip(options: DirectoryEnDeOptions, name: Option<&str>, len: u64, ind
 				(!options.audios && AUD_FORMATS.contains(&ext.as_str())) ||
 				(!options.texts  && TXT_FORMATS.contains(&ext.as_str()))
 			)
-		) ||
-		(options.intervals.is_some() && !options.intervals.clone().unwrap().contains(&index))
+		)
 	{
 		true
 	} else {
