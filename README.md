@@ -43,7 +43,8 @@ Secured with two passwords.
 * cd <dir> – change directory to the one specified
 * ld – list current directory
 * st – display properties of current directory
-Example usage: 
+
+#### Example usage: 
  * `en only p as 1..6 9` – encypt only pictures of all sizes in interval 1 to 6 and 9th separately
  * `de all` – decrypt every file (w/o recursion)
  * `en all f -l` – encrypt every file with folders inside folders, but ignore large files
