@@ -48,5 +48,6 @@ Secured with two passwords.
  * `en only p as 1..6 9` – encypt only pictures of all sizes in interval 1 to 6 and 9th separately
  * `de all` – decrypt every file (w/o recursion)
  * `en all f -l` – encrypt every file with folders inside folders, but ignore large files
+ * `de only 'family vacation'` – decrypt file named 'family vacation'
  
 Note about smart filters: file names and intervals have the biggest privelege";
